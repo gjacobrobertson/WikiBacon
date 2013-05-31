@@ -1,5 +1,6 @@
 #! /usr/bin/env ruby
 require 'xml'
+require 'neography'
 
 
 class WikiDump
@@ -45,6 +46,10 @@ class Page
     "#{@title}\n\t#{links.join("\n\t")}"
   end
 
+  def save
+    links.each{|l| l.save}
+  end
+
   private :reader
 
   def parse
@@ -82,7 +87,16 @@ class WikiLink
     "#{source} -> #{target}"
   end
 
+  def save
+    source_node = create_unique_node(source)
+    target_node = create_unique_node(target)
+    Application.neo.create_relationship('links_to', source_node, target_node)
+  end
   private
+
+  def create_unique_node(title)
+    Application.neo.create_unique_node('pages', :title, title, :title => title)
+  end
 
   def namespace
     if @link.include? ":"
@@ -111,12 +125,38 @@ end
 class Application
   attr_reader :dump_file
 
+  class << self
+    attr_reader :neo
+  end
+
+  Neography.configure do |config|
+   config.protocol       = "http://"
+   config.server         = "localhost"
+   config.port           = 7474
+   config.directory      = ""  # prefix this path with '/' 
+   config.cypher_path    = "/cypher"
+   config.gremlin_path   = "/ext/GremlinPlugin/graphdb/execute_script"
+   config.log_file       = "neography.log"
+   config.log_enabled    = false
+   config.max_threads    = 20
+   config.authentication = nil  # 'basic' or 'digest'
+   config.username       = nil
+   config.password       = nil
+   config.parser         = MultiJsonParser
+  end
+
+  @neo = Neography::Rest.new
+
   def initialize(dump_file)
     @dump_file = dump_file
   end
 
   def run
-    puts dump.map { |node| Page.new node }
+    dump.each do |node|
+      page = Page.new node
+      puts page
+      page.save
+    end
   end
 
   private :dump_file
