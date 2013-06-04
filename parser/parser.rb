@@ -39,7 +39,7 @@ class Page
   end
 
   def links
-    return text.scan(LINK_REGEX).map{ |l| WikiLink.new self, l }.select{|l| l.valid?}
+    return text.scan(LINK_REGEX).map{ |l| WikiLink.new self, l }.select{|l| l.valid?}.uniq
   end
 
   def to_s
