@@ -39,18 +39,30 @@ class Page
   end
 
   def links
-    return text.scan(LINK_REGEX).map{ |l| WikiLink.new self, l }.select{|l| l.valid?}.uniq
-  end
-
-  def to_s
-    "#{@title}\n\t#{links.join("\n\t")}"
+    return text.scan(LINK_REGEX).map{ |l| WikiLink.new l }.select{|l| l.valid?}.uniq
   end
 
   def save
-    links.each{|l| l.save}
+    page_node = Application.neo.create_unique_node 'pages', 'title', @title, :title => @title
+    create_relationships page_node, create_nodes
   end
 
   private :reader
+
+  def create_nodes
+    batch = links.map do |link|
+      link_title = link.title
+      [:create_unique_node, 'pages', 'title', link_title, {:title => link_title}]
+    end
+    Application.neo.batch(*batch)
+  end
+
+  def create_relationships(page_node, link_nodes)
+    batch = link_nodes.map do |response|
+      [:create_relationship, 'links_to',  page_node['self'], response['body']['self']]
+    end
+    Application.neo.batch(*batch)
+  end
 
   def parse
     while reader.read
@@ -66,37 +78,19 @@ class Page
 end
 
 class WikiLink
-  def initialize(page, link)
-    @page = page
-    @link = link[2..-3]
+  def initialize(link)
+    @link = link
   end
 
-  def source
-    @page.title
-  end
-
-  def target
-    canonicalize unsection unalias @link
+  def title
+    canonicalize unsection unalias unwrap @link
   end
 
   def valid?
-    namespace == "Main" && target != ''
+    namespace == "Main" && title != ''
   end
 
-  def to_s
-    "#{source} -> #{target}"
-  end
-
-  def save
-    source_node = create_unique_node(source)
-    target_node = create_unique_node(target)
-    Application.neo.create_relationship('links_to', source_node, target_node)
-  end
   private
-
-  def create_unique_node(title)
-    Application.neo.create_unique_node('pages', :title, title, :title => title)
-  end
 
   def namespace
     if @link.include? ":"
@@ -104,6 +98,10 @@ class WikiLink
     else
       "Main"
     end
+  end
+
+  def unwrap(link)
+    link[2..-3]
   end
 
   def unalias(link)
@@ -129,22 +127,6 @@ class Application
     attr_reader :neo
   end
 
-  Neography.configure do |config|
-   config.protocol       = "http://"
-   config.server         = "localhost"
-   config.port           = 7474
-   config.directory      = ""  # prefix this path with '/' 
-   config.cypher_path    = "/cypher"
-   config.gremlin_path   = "/ext/GremlinPlugin/graphdb/execute_script"
-   config.log_file       = "neography.log"
-   config.log_enabled    = false
-   config.max_threads    = 20
-   config.authentication = nil  # 'basic' or 'digest'
-   config.username       = nil
-   config.password       = nil
-   config.parser         = MultiJsonParser
-  end
-
   @neo = Neography::Rest.new
 
   def initialize(dump_file)
@@ -154,7 +136,6 @@ class Application
   def run
     dump.each do |node|
       page = Page.new node
-      puts page
       page.save
     end
   end
